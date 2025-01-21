@@ -5,10 +5,10 @@ WORKDIR /opt/node_app
 COPY package.json yarn.lock ./
 RUN yarn --ignore-optional --network-timeout 600000
 
-ARG NODE_ENV=flops
+ARG NODE_ENV=production
 
 COPY . .
-RUN NODE_OPTIONS="--max-old-space-size=4096" yarn build:app:docker
+RUN NODE_OPTIONS="--max-old-space-size=4096" yarn build:app:docker --mode flops
 
 FROM nginx:1.21-alpine
 
