@@ -11,8 +11,8 @@ import type {
   OrderedExcalidrawElement,
   SceneElementsMap,
 } from "./element/types";
-import { hashElementsVersion } from "./element";
 import { assertNever } from "./utils";
+import { hashElementsVersion } from "./element";
 
 // hidden non-enumerable property for runtime checks
 const hiddenObservedAppStateProp = "__observedAppState";
@@ -43,7 +43,7 @@ const isObservedAppState = (
   !!Reflect.get(appState, hiddenObservedAppStateProp);
 
 // CFDO: consider adding a "remote" action, which should perform update but never be emitted (so that it we don't have to filter it when pushing it into sync api)
-export const SnapshotAction = {
+export const StoreAction = {
   /**
    * Immediately undoable.
    *
@@ -68,7 +68,7 @@ export const SnapshotAction = {
    * Use for updates which should not be captured as deltas immediately, such as
    * exceptions which are part of some async multi-step proces.
    *
-   * These updates will be captured with the next `SnapshotAction.CAPTURE`,
+   * These updates will be captured with the next `StoreAction.CAPTURE`,
    * triggered either by the next `updateScene` or internally by the editor.
    *
    * These updates will _eventually_ make it to the local undo / redo stacks.
@@ -78,7 +78,7 @@ export const SnapshotAction = {
   NONE: "NONE",
 } as const;
 
-export type SnapshotActionType = ValueOf<typeof SnapshotAction>;
+export type StoreActionType = ValueOf<typeof StoreAction>;
 
 /**
  * Store which captures the observed changes and emits them as `StoreIncrement` events.
@@ -98,9 +98,9 @@ export class Store {
     this._snapshot = snapshot;
   }
 
-  private scheduledActions: Set<SnapshotActionType> = new Set();
+  private scheduledActions: Set<StoreActionType> = new Set();
 
-  public scheduleAction(action: SnapshotActionType) {
+  public scheduleAction(action: StoreActionType) {
     this.scheduledActions.add(action);
     this.satisfiesScheduledActionsInvariant();
   }
@@ -110,26 +110,27 @@ export class Store {
    */
   // TODO: Suspicious that this is called so many places. Seems error-prone.
   public scheduleCapture() {
-    this.scheduleAction(SnapshotAction.CAPTURE);
+    this.scheduleAction(StoreAction.CAPTURE);
   }
 
   private get scheduledAction() {
     // Capture has a precedence over update, since it also performs snapshot update
-    if (this.scheduledActions.has(SnapshotAction.CAPTURE)) {
-      return SnapshotAction.CAPTURE;
+    if (this.scheduledActions.has(StoreAction.CAPTURE)) {
+      return StoreAction.CAPTURE;
     }
 
     // Update has a precedence over none, since it also emits an (ephemeral) increment
-    if (this.scheduledActions.has(SnapshotAction.UPDATE)) {
-      return SnapshotAction.UPDATE;
+    if (this.scheduledActions.has(StoreAction.UPDATE)) {
+      return StoreAction.UPDATE;
     }
 
+    // CFDO: maybe it should be explicitly set so that we don't clone on every single component update
     // Emit ephemeral increment, don't update the snapshot
-    return SnapshotAction.NONE;
+    return StoreAction.NONE;
   }
 
   /**
-   * Performs the incoming `SnapshotAction` and emits the corresponding `StoreIncrement`.
+   * Performs the incoming `StoreAction` and emits the corresponding `StoreIncrement`.
    * Emits `DurableStoreIncrement` when action is "capture", emits `EphemeralStoreIncrement` otherwise.
    *
    * @emits StoreIncrement
@@ -142,13 +143,13 @@ export class Store {
       const { scheduledAction } = this;
 
       switch (scheduledAction) {
-        case SnapshotAction.CAPTURE:
+        case StoreAction.CAPTURE:
           this.snapshot = this.captureDurableIncrement(elements, appState);
           break;
-        case SnapshotAction.UPDATE:
+        case StoreAction.UPDATE:
           this.snapshot = this.emitEphemeralIncrement(elements);
           break;
-        case SnapshotAction.NONE:
+        case StoreAction.NONE:
           this.emitEphemeralIncrement(elements);
           return;
         default:
@@ -171,7 +172,9 @@ export class Store {
     appState: AppState | ObservedAppState | undefined,
   ) {
     const prevSnapshot = this.snapshot;
-    const nextSnapshot = this.snapshot.maybeClone(elements, appState);
+    const nextSnapshot = this.snapshot.maybeClone(elements, appState, {
+      shouldIgnoreCache: true,
+    });
 
     // Optimisation, don't continue if nothing has changed
     if (prevSnapshot === nextSnapshot) {
@@ -236,7 +239,7 @@ export class Store {
       const nextElement = nextElements.get(id);
 
       if (!nextElement) {
-        // Nothing to care about here, elements were forcefully deleted
+        // Nothing to care about here, element was forcefully deleted
         continue;
       }
 
@@ -282,7 +285,9 @@ export class Store {
       elementsContainVisibleChange || appStateContainsVisibleChange;
 
     const prevSnapshot = this.snapshot;
-    const nextSnapshot = this.snapshot.maybeClone(nextElements, nextAppState);
+    const nextSnapshot = this.snapshot.maybeClone(nextElements, nextAppState, {
+      shouldIgnoreCache: true,
+    });
 
     if (options.triggerIncrement) {
       const change = StoreChange.create(prevSnapshot, nextSnapshot);
@@ -307,7 +312,7 @@ export class Store {
     if (
       !(
         this.scheduledActions.size >= 0 &&
-        this.scheduledActions.size <= Object.keys(SnapshotAction).length
+        this.scheduledActions.size <= Object.keys(StoreAction).length
       )
     ) {
       const message = `There can be at most three store actions scheduled at the same time, but there are "${this.scheduledActions.size}".`;
@@ -538,8 +543,16 @@ export class StoreSnapshot {
   public maybeClone(
     elements: Map<string, OrderedExcalidrawElement> | undefined,
     appState: AppState | ObservedAppState | undefined,
+    options: {
+      shouldIgnoreCache: boolean;
+    } = {
+      shouldIgnoreCache: false,
+    },
   ) {
-    const nextElementsSnapshot = this.maybeCreateElementsSnapshot(elements);
+    const nextElementsSnapshot = this.maybeCreateElementsSnapshot(
+      elements,
+      options,
+    );
     const nextAppStateSnapshot = this.maybeCreateAppStateSnapshot(appState);
 
     let didElementsChange = false;
@@ -597,12 +610,17 @@ export class StoreSnapshot {
 
   private maybeCreateElementsSnapshot(
     elements: Map<string, OrderedExcalidrawElement> | undefined,
+    options: {
+      shouldIgnoreCache: boolean;
+    } = {
+      shouldIgnoreCache: false,
+    },
   ) {
     if (!elements) {
       return this.elements;
     }
 
-    const changedElements = this.detectChangedElements(elements);
+    const changedElements = this.detectChangedElements(elements, options);
 
     if (!changedElements?.size) {
       return this.elements;
@@ -619,6 +637,11 @@ export class StoreSnapshot {
    */
   private detectChangedElements(
     nextElements: Map<string, OrderedExcalidrawElement>,
+    options: {
+      shouldIgnoreCache: boolean;
+    } = {
+      shouldIgnoreCache: false,
+    },
   ) {
     if (this.elements === nextElements) {
       return;
@@ -653,10 +676,18 @@ export class StoreSnapshot {
       return;
     }
 
+    // if we wouldn't ignore a cache, durable increment would be skipped
+    // in case there was an ephemeral increment emitter just before
+    // with the same changed elements
+    if (options.shouldIgnoreCache) {
+      return changedElements;
+    }
+
     // due to snapshot containing only durable changes,
     // we might have already processed these elements in a previous run,
     // hence additionally check whether the hash of the elements has changed
     // since if it didn't, we don't need to process them again
+    // otherwise we would have ephemeral increments even for component updates unrelated to elements
     const changedElementsHash = hashElementsVersion(
       Array.from(changedElements.values()),
     );

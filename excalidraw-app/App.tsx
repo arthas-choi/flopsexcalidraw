@@ -24,7 +24,7 @@ import {
   Excalidraw,
   LiveCollaborationTrigger,
   TTDDialogTrigger,
-  SnapshotAction,
+  StoreAction,
   reconcileElements,
   newElementWith,
 } from "../packages/excalidraw";
@@ -521,7 +521,7 @@ const ExcalidrawWrapper = () => {
             excalidrawAPI.updateScene({
               ...data.scene,
               ...restore(data.scene, null, null, { repairBindings: true }),
-              snapshotAction: SnapshotAction.CAPTURE,
+              storeAction: StoreAction.CAPTURE,
             });
           }
         });
@@ -548,7 +548,7 @@ const ExcalidrawWrapper = () => {
           setLangCode(getPreferredLanguage());
           excalidrawAPI.updateScene({
             ...localDataState,
-            snapshotAction: SnapshotAction.UPDATE,
+            storeAction: StoreAction.UPDATE,
           });
           LibraryIndexedDBAdapter.load().then((data) => {
             if (data) {
@@ -680,7 +680,7 @@ const ExcalidrawWrapper = () => {
           if (didChange) {
             excalidrawAPI.updateScene({
               elements,
-              snapshotAction: SnapshotAction.UPDATE,
+              storeAction: StoreAction.UPDATE,
             });
           }
         }
@@ -850,7 +850,7 @@ const ExcalidrawWrapper = () => {
 
   const debouncedTimeTravel = debounce(
     (value: number, direction: "forward" | "backward") => {
-      let elements = new Map(
+      let nextElements = new Map(
         excalidrawAPI?.getSceneElements().map((x) => [x.id, x]),
       );
 
@@ -873,8 +873,8 @@ const ExcalidrawWrapper = () => {
       }
 
       for (const delta of deltas) {
-        [elements] = delta.elements.applyTo(
-          elements as SceneElementsMap,
+        [nextElements] = delta.elements.applyTo(
+          nextElements as SceneElementsMap,
           excalidrawAPI?.store.snapshot.elements!,
         );
       }
@@ -884,8 +884,8 @@ const ExcalidrawWrapper = () => {
           ...excalidrawAPI?.getAppState(),
           viewModeEnabled: value !== acknowledgedDeltas.length,
         },
-        elements: Array.from(elements.values()),
-        snapshotAction: SnapshotAction.NONE,
+        elements: Array.from(nextElements.values()),
+        storeAction: StoreAction.UPDATE,
       });
     },
     0,
