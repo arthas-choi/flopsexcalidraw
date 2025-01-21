@@ -5,7 +5,7 @@ WORKDIR /opt/node_app
 COPY package.json yarn.lock ./
 RUN yarn --ignore-optional --network-timeout 600000
 
-ARG NODE_ENV=production
+ARG NODE_ENV=flops
 
 COPY . .
 RUN yarn build:app:docker
