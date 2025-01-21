@@ -8,7 +8,7 @@ RUN yarn --ignore-optional --network-timeout 600000
 ARG NODE_ENV=flops
 
 COPY . .
-RUN yarn build:app:docker
+RUN NODE_OPTIONS="--max-old-space-size=4096" yarn build:app:docker
 
 FROM nginx:1.21-alpine
 
