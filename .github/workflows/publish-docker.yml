@@ -1,9 +1,6 @@
 name: Publish Docker
 
-on:
-  push:
-    branches:
-      - release
+on: workflow_dispatch
 
 jobs:
   publish-docker:
